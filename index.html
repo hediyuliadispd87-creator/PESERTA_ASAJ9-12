@@ -154,26 +154,101 @@
   let db, pesertaRef, pesertaNama='', pesertaId='', pesertaKelas='', pesertaRuangan='';
   let violations=0, timerSeconds=90*60, timerInterval, headerExpanded=false;
 
-  /* ─── AUDIO UNLOCK (dipanggil saat gesture pengguna / klik tombol) ─── */
+  /* ─── AUDIO: unlock + boost agresif ─── */
+  let _audioCtx = null;
+  let _gainNode  = null;
+
+  /* Panggil sekali saat gesture pengguna (klik tombol Mulai) */
   function unlockAudio() {
     try {
-      const ctx = new (window.AudioContext || window.webkitAudioContext)();
-      const buf = ctx.createBuffer(1, 1, 22050);
-      const src = ctx.createBufferSource();
-      src.buffer = buf; src.connect(ctx.destination); src.start(0);
-      setTimeout(() => ctx.close(), 500);
+      _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+      /* Master gain – overdrive untuk output semaksimal mungkin */
+      _gainNode = _audioCtx.createGain();
+      _gainNode.gain.value = 10.0;
+      _gainNode.connect(_audioCtx.destination);
+
+      /* 1-sample silent beep untuk "membuka" pipeline audio */
+      const buf = _audioCtx.createBuffer(1, 1, 22050);
+      const src = _audioCtx.createBufferSource();
+      src.buffer = buf;
+      src.connect(_gainNode);
+      src.start(0);
+
+      /* Silent oscillator terus berjalan → cegah AudioContext "tidur" */
+      const silentOsc  = _audioCtx.createOscillator();
+      const silentGain = _audioCtx.createGain();
+      silentGain.gain.value = 0.00001;  // tidak terdengar
+      silentOsc.connect(silentGain);
+      silentGain.connect(_gainNode);
+      silentOsc.frequency.value = 1;
+      silentOsc.start();
     } catch(e) { console.warn('AudioContext unlock:', e); }
+
+    /* Warm-up Speech Synthesis agar TTS langsung aktif */
     try {
       window.speechSynthesis.cancel();
-      const warmup = new SpeechSynthesisUtterance('');
-      warmup.volume = 0;
-      window.speechSynthesis.speak(warmup);
-    } catch(e) { console.warn('TTS unlock:', e); }
+      const wu = new SpeechSynthesisUtterance('');
+      wu.volume = 0;
+      window.speechSynthesis.speak(wu);
+    } catch(e) { console.warn('TTS warmup:', e); }
   }
 
-  function speakAlert(text) {
-    try { window.speechSynthesis.cancel(); const utter=new SpeechSynthesisUtterance(text); utter.lang='id-ID'; utter.volume=1; utter.rate=0.9; utter.pitch=1; window.speechSynthesis.speak(utter); } catch(e) { console.warn('TTS error:', e); }
+  /* Burst noise singkat → paksa hardware audio aktif, lalu TTS */
+  function boostAndSpeak(text) {
+    /* Resume context jika suspended */
+    if (_audioCtx) {
+      if (_audioCtx.state === 'suspended') _audioCtx.resume().catch(()=>{});
+
+      /* White-noise burst sangat pelan → "ketuk" hardware agar tidak mute */
+      try {
+        const sr   = _audioCtx.sampleRate;
+        const buf  = _audioCtx.createBuffer(1, Math.floor(sr * 0.08), sr);
+        const data = buf.getChannelData(0);
+        for (let i = 0; i < data.length; i++) data[i] = (Math.random()*2-1) * 0.0002;
+        const burst     = _audioCtx.createBufferSource();
+        const burstGain = _audioCtx.createGain();
+        burstGain.gain.value = 8.0;
+        burst.buffer = buf;
+        burst.connect(burstGain);
+        burstGain.connect(_gainNode || _audioCtx.destination);
+        burst.start();
+      } catch(e) {}
+    }
+
+    /* TTS volume max + retry otomatis */
+    try {
+      window.speechSynthesis.cancel();
+      let attempt = 0;
+
+      const trySpeak = () => {
+        const utter = new SpeechSynthesisUtterance(text);
+        utter.lang  = 'id-ID';
+        utter.volume = 1;      // max yang diizinkan Web API
+        utter.rate  = 0.85;
+        utter.pitch = 1.1;
+
+        /* Pilih suara Bahasa Indonesia jika tersedia */
+        const voices  = window.speechSynthesis.getVoices();
+        const idVoice = voices.find(v => v.lang.startsWith('id'));
+        if (idVoice) utter.voice = idVoice;
+
+        utter.onerror = () => { if (attempt < 2) { attempt++; setTimeout(trySpeak, 400); } };
+        window.speechSynthesis.speak(utter);
+      };
+
+      /* Chrome lazy-load voices */
+      if (window.speechSynthesis.getVoices().length === 0) {
+        window.speechSynthesis.addEventListener('voiceschanged', trySpeak, { once: true });
+        setTimeout(trySpeak, 600);   // fallback
+      } else {
+        trySpeak();
+      }
+    } catch(e) { console.warn('TTS error:', e); }
   }
+
+  function speakAlert(text) { boostAndSpeak(text); }
+
   function toggleHeader() {
     const header=document.getElementById('examHeader'); headerExpanded=!headerExpanded;
     if(headerExpanded){header.style.maxHeight=header.scrollHeight+'px';header.classList.remove('collapsed');}
@@ -182,7 +257,6 @@
   function initHeaderHeight(){const header=document.getElementById('examHeader');header.dataset.fullHeight=header.scrollHeight;header.classList.add('collapsed');}
   function initFirebase(){try{firebase.initializeApp(firebaseConfig);db=firebase.database();}catch(e){console.error('Firebase error:',e);}}
   function mulaiUjian() {
-    // ★ Aktifkan izin audio di sini (harus dalam konteks gesture pengguna)
     unlockAudio();
     const nama=document.getElementById('inputNama').value.trim();
     const id=document.getElementById('inputId').value.trim();
