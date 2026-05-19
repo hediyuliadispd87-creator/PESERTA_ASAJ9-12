@@ -278,8 +278,18 @@
   function onFrameLoad(){const loading=document.getElementById('iframeLoading');loading.classList.add('hidden');setTimeout(()=>{loading.style.display='none';},300);}
   function registerPeserta(){if(!db)return;const key=pesertaId.replace(/[.#$[\]/]/g,'_');pesertaRef=db.ref('ujian/peserta/'+key);pesertaRef.set({id:pesertaId,nama:pesertaNama,kelas:pesertaKelas,ruangan:pesertaRuangan,status:'aman',violations:0,joinedAt:Date.now(),lastUpdate:Date.now()});pesertaRef.onDisconnect().update({status:'offline',lastUpdate:Date.now()});}
   function updateStatus(status){if(pesertaRef)pesertaRef.update({status,lastUpdate:Date.now()});const indicator=document.getElementById('statusIndicator'),text=document.getElementById('statusText');indicator.className='status-indicator full';if(status==='aman'){indicator.classList.add('aman');text.textContent='Sedang Ujian';}else if(status==='tab'){indicator.classList.add('warning');text.textContent='Buka Tab Lain';}else if(status==='keluar'){indicator.classList.add('danger');text.textContent='Keluar Halaman';}}
-  function addViolation(type){violations++;if(pesertaRef)pesertaRef.update({violations});document.getElementById('violationCount').textContent=violations;if(type==='tab')speakAlert('MEMBUKA TAB LAIN');showWarning(type);}
-  function showWarning(type){const overlay=document.getElementById('warningOverlay');document.getElementById('warningTitle').textContent=type==='tab'?'Tab Lain Terdeteksi!':'Keluar dari Halaman!';document.getElementById('warningMsg').textContent=type==='tab'?'Kamu membuka tab atau window lain saat ujian. Tindakan ini telah dicatat dan dilaporkan ke pengawas.':'Kamu meninggalkan halaman ujian. Tindakan ini telah dicatat dan dilaporkan ke pengawas.';document.getElementById('warningCount').textContent=`Pelanggaran ke-${violations}`;overlay.classList.add('show');setTimeout(()=>overlay.classList.remove('show'),3500);}
+  function addViolation(type){violations++;if(pesertaRef)pesertaRef.update({violations});document.getElementById('violationCount').textContent=violations;showWarning(type);}
+  function showWarning(type){
+    const overlay=document.getElementById('warningOverlay');
+    document.getElementById('warningTitle').textContent=type==='tab'?'Tab Lain Terdeteksi!':'Keluar dari Halaman!';
+    document.getElementById('warningMsg').textContent=type==='tab'?'Kamu membuka tab atau window lain saat ujian. Tindakan ini telah dicatat dan dilaporkan ke pengawas.':'Kamu meninggalkan halaman ujian. Tindakan ini telah dicatat dan dilaporkan ke pengawas.';
+    document.getElementById('warningCount').textContent=`Pelanggaran ke-${violations}`;
+    overlay.classList.add('show');
+    /* TTS muncul 400ms setelah screen merah tampil */
+    const ttsText = type==='tab' ? 'PERHATIAN! Kamu membuka tab lain!' : 'PERHATIAN! Kamu keluar dari halaman ujian!';
+    setTimeout(() => speakAlert(ttsText), 400);
+    setTimeout(()=>overlay.classList.remove('show'),3500);
+  }
   function setupMonitoring(){
     document.addEventListener('visibilitychange',()=>{if(document.hidden){updateStatus('tab');addViolation('tab');}else{updateStatus('aman');}});
     let iframeHasFocus=false;
